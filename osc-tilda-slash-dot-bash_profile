@@ -1,0 +1,20 @@
+#!/bin/bash
+
+export HISTCONTROL=ignoreboth
+export HISTFILESIZE=1048576
+export EDITOR=nano
+
+export LC_CTYPE='en_GB.UTF-8'
+export LC_MESSAGES='en_GB.UTF-8'
+
+export DOCKER_HOST=tcp://192.168.56.250:2375
+export DOCKER_API_VERSION='1.24'
+#export DOCKER_API_VERSION='1.22'
+
+alias ll='ls -lGA'
+#alias ssha='ssh -A'
+
+export PATH="$HOME/bin:$PATH"
+export GOPATH="/Users/user/dev/go"
+
+export PS1='\[$( if [[ $? -eq 0 ]] ; then echo -n "\033[0;32m" ; else echo -n "\033[0;31m" ; fi )\]\u@\h \w❯ \[\033[0m\]'

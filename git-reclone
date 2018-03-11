@@ -1,0 +1,32 @@
+#!/bin/bash
+
+set -x
+
+if [[ -z "$1" ]]
+then
+  echo 'expected one argument, with repo to reclone' >&2
+  exit 1
+fi
+if [[ ! -d "$1" ]]
+then
+  echo 'provided argument is not a directory' >&2
+  exit 1
+fi
+
+repo="${1%/}"
+if ! url="$( cd "$repo" && git config remote.origin.url )"
+then
+  echo 'git config command exited with non-zero code'
+  exit 1
+fi
+
+count=1
+target_name="backup-$repo-$count"
+while [[ -d "$target_name" ]]
+do
+  (( count++ ))
+  target_name="backup-$repo-$count"
+done
+
+mv "$repo" "$target_name"
+git clone "$url" "$repo"

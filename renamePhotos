@@ -1,0 +1,165 @@
+#!/bin/bash
+
+set -o errexit
+set -o pipefail
+
+if ! which exiv2 >/dev/null
+then
+  echo 'exiv2 not in path' >&2
+  exit 1
+fi
+
+readonly LIST_UNSORTED='.list-unsorted.txt'
+readonly LIST_SORTED='.list-sorted.txt'
+
+## Print the 'ShutterCount' tag from exif,
+## used to determine the order of photos if more than one
+## in taken in scope of single second.
+## In case the exif tag is not available - print '1' instead.
+function fileShutterCount {
+  local file="$1"
+  local SHUTTER_LINE=
+  local SHUTTER=
+  if SHUTTER_LINE="$( exiv2 -pt -K Exif.Nikon3.ShutterCount "$file" )" ; then
+    SHUTTER="$( echo "$SHUTTER_LINE" | awk '{ print $4 }' )"
+    if [[ -n $SHUTTER ]] ; then
+      echo "$SHUTTER"
+      return 0
+    fi
+  fi
+  echo '1'
+}
+
+## Print the timestamp of the photo in form of '%Y%m%d-%H%M%S', which 
+## will be used to compose a filename later.
+## First, exiv2 is used to print values of following exif tags:
+##  * Exif.Image.DateTime
+##  * Exif.Photo.DateTimeOriginal
+##  * Exif.Photo.DateTimeDigitized
+## those are ascii fields with format '%Y:%m:%d %H:%M:%S', so
+## they can be naturally sorted and the earliest one is used.
+## Colons are dropped and space is replaced with minus, to get the
+## '%Y%m%d-%H%M%S' format.
+## If the exif resolution fails for any reason, the filesystem file
+## modification date is used, but that can get messy because of
+## different timezones interpretation on the camera and on the
+## host linux system.
+function fileNameTimestamp {
+  
+  local file="$1"
+  local EXIF_EARLIEST_DATE=
+  
+  if EXIF_EARLIEST_DATE="$( exiv2 -pt -K Exif.Image.DateTime -K Exif.Photo.DateTimeOriginal -K Exif.Photo.DateTimeDigitized "$file" | awk 'NF > 3 { gsub(":","",$4); gsub(":","",$5); print $4 "-" $5 }' | sort | head -1 )"
+  then
+    if [[ -n "$EXIF_EARLIEST_DATE" ]] ; then
+      echo "$EXIF_EARLIEST_DATE"
+      return 0
+    fi
+  fi
+
+  ## if we are still here - all the exif reading failed,
+  ## reading modify date from the file itself:
+  local TIMESTAMP_SECONDS="$( stat -c %Y "$file" )"
+  local TIMESTAMP_DATED="$( date --utc --date="@$TIMESTAMP_SECONDS" +%Y%m%d-%H%M%S )"
+  echo "$TIMESTAMP_DATED"
+}
+
+## Resolve the prefix format (number of zeros to pad), used to number the files via printf.
+function prefixFormat {
+  local COUNT="$1"
+  if [ "$COUNT" -ge 10000 ] ; then
+    echo '%05d\n'
+  elif [ "$COUNT" -ge 1000 ] ; then
+    echo '%04d\n'
+  elif [ "$COUNT" -ge 100 ] ; then
+    echo '%03d\n'
+  elif [ "$COUNT" -ge 10 ] ; then
+    echo '%02d\n'
+  else
+    echo '%01d\n'
+  fi
+}
+
+## clearing the list of unsorted files in case it exists:
+: >"$LIST_UNSORTED"
+
+
+## changing find name argument depending on command line:
+if [[ $# -ne 0 ]] ; then
+  ## we may have full list of files already thanx to bash star expansion,
+  ## or user may have provided the pattern to search ourselves:
+  if [[ "$*" == *'*'* ]] ; then
+    ## listing files into variable (to count the number as well),
+    ## disabling recursion, ignoring hidden files,
+    ## printing only file name:
+    readonly FILES_LIST="$( find . -maxdepth 1 -type f -name "$*" -not -name '.*' -printf '%f\n' )"
+  else
+    ## list of files was provided through command line arguments,
+    ## probably already expanded by bash:
+    readonly FILES_LIST="$( echo "$@" | sed 's/\s\+/\n/g' )"
+  fi
+else
+  ## listing files into variable (to count the number as well),
+  ## disabling recursion, ignoring hidden files,
+  ## printing only file name:
+  readonly FILES_LIST="$( find . -maxdepth 1 -type f -name '*' -not -name '.*' -printf '%f\n' )"
+fi
+
+
+## number of files:
+readonly FILES_COUNT="$( echo "$FILES_LIST" | grep -c '^' )"
+
+## iterating over files:
+num=0
+while read file
+do
+  ## should be no blanks, but better check:
+  if [[ -z "$file" ]] ; then
+    continue
+  fi
+  (( ++num ))
+  ## the process is very slow, so we will inform the user at the console
+  ## not to hang silently, and using carriage return to refresh the same line:
+  echo -en "\rprocessing files: ${num}/${FILES_COUNT}: ${file}..."
+  ## print 3 columns to the unsorted list:
+  ##  * shutter count
+  ##  * file name timestamp
+  ##  * original file name
+  echo "$( fileShutterCount "$file" ) $( fileNameTimestamp "$file" ) $file" >>"$LIST_UNSORTED"
+done <<< "$FILES_LIST"
+
+## compensating for carriage return:
+echo -e "\033[2K\rprocessing of ${num} files finished."
+
+## resolve the prefix once before going to rename:
+PREFIX_FORMAT="$( prefixFormat "$FILES_COUNT" )"
+## resorting the list of files, natural order works fine here
+## because the shutter count is the first column,
+## and if it is 0 then timestamp is second column:
+cat "$LIST_UNSORTED" | sort >"$LIST_SORTED"
+## count to format file name prefix:
+count=0
+## reading through the list of sorted files:
+while read line
+do
+  if [[ -z "$line" ]] ; then
+    continue
+  fi
+  ## incrementing count, ((count++)) exits with error because initial count is 0:
+  (( ++count ))
+  ## extracting original file name from third column:
+  ORIG_NAME="$( echo "$line" | awk '{ print $3 }' )"
+  ## extracting (lowecased) extension from file name:
+  EXT=$( echo "$ORIG_NAME" | awk -F '.' '{print tolower($NF)}')
+  ## formatting the file name with the count, timestamp and extension:
+  TARGET_NAME="$( printf "$PREFIX_FORMAT" "$count" )-$( echo "$line" | awk '{ print $2}' ).$EXT"
+  ## printing the operation that is about to take place:
+  printf "%-20s => %-50s \n" "$ORIG_NAME" "$TARGET_NAME"
+  ## checking if file is already properly named, not to fail on mv operation:
+  if [[ "$ORIG_NAME" != "$TARGET_NAME" ]] ; then
+    mv "$ORIG_NAME" "$TARGET_NAME"
+  fi
+done <"$LIST_SORTED"
+
+## cleaning up:
+rm "$LIST_SORTED" "$LIST_UNSORTED"

@@ -1,0 +1,198 @@
+#!/bin/bash
+
+if [[ $# -ne 1 ]] ; then
+  echo 'Usage:'
+  echo -n "$(basename ${BASH_SOURCE[0]}) <path to CUE file>"
+  exit 1
+fi
+
+if ! which flac >/dev/null
+then
+  echo 'flac was not found' >&2
+  exit 1
+fi
+
+set -e
+
+readonly CUE="$1"
+
+
+GENRE=                                                                                                                                                                                                                                                                     
+YEAR=                                                                                                                                                                                                                                                                      
+PERFORMER=
+ALBUM=
+FILE=
+TRACKNUMBER=
+TRACKTITLE=
+INDEX=
+
+
+READ_TRACK=
+READ_PERFORMER=
+READ_TITLE=
+READ_FROM=
+READ_UNTIL=
+
+
+## function accepts 2 arguments:
+##   1) prefix to be trimmed from the line;
+##   2) the line read from the cue file;
+## performs following operations:
+##   1) cuts the prefix from the beginning of the line,
+##      including any whitespaces;
+##   2) cuts all the trailing whitespaces;
+##   3) if the remainder of the string starts with quotes
+##      then everything outside quotes is dropped and the
+##      content between the quotes is printed to stdout;
+##   4) if the remainder of the string does NOT start with quotes
+##      then only first part of the string, to first space,
+##      is printed to stdout.
+function sedTheLine {
+  local prefix="$1"
+  local line="$2"
+  line="$( echo "$line" | sed -e "s/^ *${prefix} *//" -e 's/ *$//' )"
+  if [[ $line == '"'* ]] ; then
+    echo "$line" | sed -e 's/^"//' -e 's/".*$//'
+  else
+    echo "$line" | awk '{ print $1 }'
+  fi
+}
+
+function resolveFile {
+  local input="$1"
+  case "${input,,}" in
+    *'.wav')
+      FILE="$input"
+    ;;
+    *'.flac')
+      flac -d -f "$input" 1>/dev/null
+      FILE="$( echo "$input" | sed 's/.flac$/.wav/' )"
+    ;;
+    *)
+      FILE="$( echo "$input" | sed 's/\.[^\.]*$/.wav/' )"
+      if [[ -f "$FILE" ]] ; then
+        rm -f "$FILE"
+      fi
+      if ! ffmpeg -i "$input" "$FILE" </dev/null
+      then
+        echo 'ffmpeg failed to decode the input file into wav' >&2
+        exit 1
+      fi
+    ;;
+  esac
+}
+
+function cueTimeToFlacTime {
+  local input="$1"
+  local frame
+  local fraction
+  frame="$( echo "$input" | sed -e 's/^.*://' -e 's/^0//' )"
+  fraction=$(( $frame * 4 / 3 ))
+  if [[ $fraction -gt 99 ]] ; then
+    fraction=99
+  elif [[ $fraction -lt 10 ]] ; then
+    fraction="0$fraction"
+  fi
+  echo "${input:0:5}.$fraction"
+}
+
+function validate {
+  if [[ "$READ_TITLE" == *'"'* ]] || [[ "$READ_PERFORMER" == *'"'* ]] || [[ "$ALBUM" == *'"'* ]] ; then
+    echo 'Some of the titles contain double quotes, that is not yet supported' >&2
+    exit 1
+  fi
+}
+
+function encodeTrack {
+
+  validate
+
+  local command='flac -f --best'
+  ## dropping illegal filename characters from title:
+  command="$command --output-name=\"$READ_TRACK - $( echo "$READ_TITLE" | tr -d "\`\!#\$%^&*{}<>;:?/'\"|=+\\\\" ).flac\""
+  ## adding must-exist tags:
+  command="$command --tag=TRACKNUMBER=\"$READ_TRACK\" --tag=ARTIST=\"$READ_PERFORMER\" --tag=PERFORMER=\"$READ_PERFORMER\" --tag=TITLE=\"$READ_TITLE\" --tag=ALBUM=\"$ALBUM\""
+  ## checking and adding optional tags:
+  if [[ -n "$GENRE" ]] ; then
+    command="$command --tag=GENRE=\"$GENRE\""
+  fi
+  if [[ -n "$YEAR" ]] ; then
+    command="$command --tag=DATE=\"$YEAR\""
+  fi
+  ## adding skip:
+  command="$command --skip=\"$( cueTimeToFlacTime "$READ_FROM" )\""
+  ## adding until if we have one:
+  if [[ -n "$READ_UNTIL" ]] ; then
+    command="$command --until=\"$( cueTimeToFlacTime "$READ_UNTIL" )\""
+  fi
+  ## adding input file:
+  command="$command \"$FILE\""
+  
+  echo -n "executing: '$command'"
+  eval "$command" 1>/dev/null
+ 
+  READ_TRACK=''
+  READ_TITLE=''
+  READ_PERFORMER=''
+  READ_FROM=''
+  READ_UNTIL=''
+}
+
+
+while read -r cueline || [[ -n "$cueline" ]] ; do
+  line="$( echo "$cueline" | tr -d '\r\n' )"
+  if [[ -z $line ]] ; then
+    continue
+  fi
+  case "$line" in
+    'REM'*)
+      case "$( echo "$line" | awk '{ print $2 }' )" in
+        'GENRE')
+          GENRE="$( sedTheLine 'REM *GENRE' "$line" )"
+        ;;
+        'DATE')
+          YEAR="$( sedTheLine 'REM *DATE' "$line" )"
+        ;;
+      esac
+    ;;
+    'PERFORMER'*)
+      PERFORMER="$( sedTheLine 'PERFORMER' "$line" )"
+    ;;
+    'TITLE'*)
+      if [[ -z $TRACKNUMBER ]] ; then
+        ALBUM="$( sedTheLine 'TITLE' "$line" )"
+      else
+        TRACKTITLE="$( sedTheLine 'TITLE' "$line" )"
+      fi
+    ;;
+    'FILE'*)
+      resolveFile "$( sedTheLine 'FILE' "$line" )"
+    ;;
+    'TRACK'*)
+      TRACKNUMBER="$( sedTheLine 'TRACK' "$line" )"
+    ;;
+    'INDEX'*)
+      case "$( echo "$line" | awk '{ print $2 }' )" in
+        '00')
+          if [[ -n "$READ_TITLE" ]] ; then
+            READ_UNTIL="$( sedTheLine 'INDEX *00' "$line" )"
+            encodeTrack
+          fi
+        ;;
+        '01')
+          if [[ -n "$READ_TITLE" ]] ; then
+            READ_UNTIL="$( sedTheLine 'INDEX *01' "$line" )"
+            encodeTrack
+          fi
+          READ_PERFORMER="$PERFORMER"
+          READ_TITLE="$TRACKTITLE"
+          READ_TRACK="$TRACKNUMBER"
+          READ_FROM="$( sedTheLine 'INDEX *01' "$line" )"
+        ;;
+      esac
+    ;;
+  esac
+done < "$CUE"
+
+## one last track left to encode:
+encodeTrack

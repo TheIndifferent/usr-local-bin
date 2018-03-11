@@ -1,0 +1,22 @@
+export HISTFILESIZE=1048576
+export EDITOR=nano
+#PS1='\u@\h[$( if [[ $? -eq 0 ]] ; then echo '0' ; else echo "\[\e[1;91m\]$?\[\e[0m\]" ; fi )]:\w> '
+PS1='$(
+exitCode=$?
+if [[ "$( ps -p $PPID --no-headers -o comm )" == "mc" ]] ; then
+  echo "\u@\h:\w> "
+else
+  if [[ $exitCode -eq 0 ]]
+  then
+    FG="\e[38;5;64m"
+    BG="\e[48;5;64m"
+  else
+    FG="\e[38;5;160m"
+    BG="\e[48;5;160m"
+  fi
+  WD_FG="\e[37m"
+  WD_BG="\e[100m"
+  WD_FG_BG="\e[90m"
+  echo "\[${BG}\e[30m\]\u@\h\[\e[49m\e[39m${FG}${WD_BG}\]\[${WD_FG}\]\w\[\e[49m${WD_FG_BG}\]\[\e[39m\] "
+fi
+)'

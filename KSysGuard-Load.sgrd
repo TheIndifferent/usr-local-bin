@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE KSysGuardWorkSheet>
+<WorkSheet title="Load" columns="1" locked="0" interval="0.5" rows="3">
+ <host port="-1" shell="" command="ksysguardd" name="localhost"/>
+ <display vScroll="0" title="CPU" manualRange="0" labels="1" row="0" hLines="1" vDistance="30" hScale="6" stacked="0" fontSize="8" version="1" autoRange="1" columnSpan="1" unit="" showUnit="0" svgBackground="" class="FancyPlotter" column="0" rowSpan="1" vLines="0">
+  <beam hostName="localhost" sensorType="float" color="0xff0057ae" sensorName="cpu/cpu0/TotalLoad"/>
+  <beam hostName="localhost" sensorType="float" color="0xffe20800" sensorName="cpu/cpu1/TotalLoad"/>
+  <beam hostName="localhost" sensorType="float" color="0xfff3c300" sensorName="cpu/cpu2/TotalLoad"/>
+  <beam hostName="localhost" sensorType="float" color="0xffff0000" sensorName="cpu/cpu3/TotalLoad"/>
+  <beam hostName="localhost" sensorType="float" color="0xff00a900" sensorName="cpu/cpu4/TotalLoad"/>
+  <beam hostName="localhost" sensorType="float" color="0xff0028a9" sensorName="cpu/cpu5/TotalLoad"/>
+  <beam hostName="localhost" sensorType="float" color="0xffa92928" sensorName="cpu/cpu6/TotalLoad"/>
+  <beam hostName="localhost" sensorType="float" color="0xff28a929" sensorName="cpu/cpu7/TotalLoad"/>
+ </display>
+ <display vScroll="0" title="RAM" manualRange="0" labels="1" row="1" hLines="1" vDistance="30" hScale="6" stacked="1" fontSize="8" version="1" autoRange="1" columnSpan="1" unit="" showUnit="0" svgBackground="" class="FancyPlotter" column="0" rowSpan="1" vLines="0">
+  <beam hostName="localhost" sensorType="integer" color="0xffff0000" sensorName="mem/physical/application"/>
+  <beam hostName="localhost" sensorType="integer" color="0xff0000ff" sensorName="mem/physical/cached"/>
+  <beam hostName="localhost" sensorType="integer" color="0xff00ff00" sensorName="mem/physical/buf"/>
+ </display>
+ <display vScroll="0" title="Written" manualRange="0" labels="1" row="2" hLines="1" vDistance="30" hScale="6" stacked="1" fontSize="8" version="1" autoRange="1" columnSpan="1" unit="" showUnit="0" svgBackground="" class="FancyPlotter" column="0" rowSpan="1" vLines="0">
+  <beam hostName="localhost" sensorType="float" color="0xffff0000" sensorName="disk/sda_(8:0)/Rate/wblk"/>
+  <beam hostName="localhost" sensorType="float" color="0xff0000ff" sensorName="disk/sda_(8:0)/Rate/rblk"/>
+ </display>
+</WorkSheet>

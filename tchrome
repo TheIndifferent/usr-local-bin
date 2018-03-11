@@ -1,0 +1,13 @@
+#!/bin/bash
+
+#set -x
+
+TMPPROFILE=$(mktemp -d)
+
+echo "Created profile folder for chrome: $TMPPROFILE"
+google-chrome --bwsi --disable-background-mode --disable-background-networking --disable-client-side-phishing-detection --disable-default-apps --disable-first-run-ui --disable-people-search --disable-sync --dns-prefetch-disable --no-default-browser-check --no-first-run --disable-translate --disable-prerender-local-predictor --user-data-dir=$TMPPROFILE "https://accounts.google.com/ServiceLogin?service=mail&continue=https://mail.google.com/mail/" "http://google.com/ncr"
+
+echo ""
+echo -n "Deleting chrome profile folder: $TMPPROFILE..."
+rm -rf $TMPPROFILE
+echo " done."

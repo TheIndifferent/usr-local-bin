@@ -1,0 +1,2 @@
+#!/bin/sh
+nice -n 19 chrt -b 0 ionice -n 7 -c 3 taskset -c $*

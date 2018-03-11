@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+
+import fileinput
+import os
+import subprocess
+import sys
+import time
+
+try:
+  if 'ADB' in os.environ:
+    adb = os.environ['ADB']
+  else:
+    adb = 'adb'
+  print('Using adb: ', adb)
+  for line in fileinput.input():
+    split = line.split(' ')
+    if len(split) != 3:
+      print('encountered invalid line, skipping: ', line)
+    time.sleep(int(split[0]))
+    command = adb + ' shell input tap ' + split[1] + ' ' + split[2]
+    print(command)
+    subprocess.call(command, shell=True)
+except KeyboardInterrupt:
+  sys.exit(0)

@@ -1,2 +1,2 @@
 # usr-local-bin
-Some useful scripts
+Set of home-grown scripts for personal use

@@ -1,0 +1,19 @@
+#!/bin/bash
+
+CONTAINERS="$( docker ps -a | grep -v 'uifd/ui-for-docker' | grep -v 'CONTAINER ID' | awk '{ print $1 }' )"
+if [[ -n "$CONTAINERS" ]] ; then
+  echo 'stopping containers...'
+  docker stop -t 5 $CONTAINERS | sed 's/^/ * /'
+  echo 'deleting containers...'
+  docker rm -f $CONTAINERS | sed 's/^/ * /'
+else
+  echo 'no containers to stop'
+fi
+
+IMAGES="$( docker images | grep 'spotify\|<none>' | awk '{ print $3 }' )"
+if [[ -n "$IMAGES" ]] ; then
+  echo 'deleting images...'
+  docker rmi $IMAGES | sed 's/^/ * /'
+else
+  echo 'no images to delete'
+fi

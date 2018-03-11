@@ -1,0 +1,28 @@
+#!/bin/bash
+
+tcpflow -p -c -i "$1" port 80 2>/dev/null \
+| grep --line-buffered -o '"step4":[0-9]\+,"step5":[0-9]\+,"step6":[0-9]\+' \
+| sed \
+-e 's/"step[0-9]"://g' \
+-e 's/,/        /g' \
+-e 's/501/invite/g' \
+-e 's/421/mineral 10k+/g' \
+-e 's/422/mineral 100k+/g' \
+-e 's/346/blue crystal/g' \
+-e 's/347/aurora crystal/g' \
+-e 's/606/def booster/g' \
+-e 's/205/training ld/g' \
+-e 's/224/intercept missile/g' \
+-e 's/1314/support pivot 4/g' \
+-e 's/1324/adv support pivot 4/g' \
+-e 's/206/adv training ld/g' \
+-e 's/221/amplified fire/g' \
+-e 's/211/preemptive fire/g' \
+-e 's/423/mineral 1m+/g' \
+-e 's/412/gold 200k+/g' \
+-e 's/603/exp booster/g' \
+-e 's/502/adv invite/g' \
+-e 's/413/gold 2m+/g' \
+-e 's/1724/adv delta opter/g' \
+-e 's/1714/delta opter/g' \
+-e 's/243/random fire/g'

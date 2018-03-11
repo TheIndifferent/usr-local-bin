@@ -1,0 +1,141 @@
+#!/usr/bin/env python
+
+import json
+import sys
+import csv
+from collections import OrderedDict
+
+if len(sys.argv) < 2:
+  print('Expected path to file')
+  sys.exit(1)
+
+jobs = {
+  99: 'Cadet',
+  105: 'Weapon Master',
+  106: 'Beam Marksman',
+  111: 'Beam Master',
+  114: 'Cannon Master',
+  115: 'Combat Master',
+  204: 'Mothership Commander',
+  205: 'Commanding Master',
+  206: 'Destroyer Navigator',
+  207: 'Cuiser Navigator',
+  218: 'Mothership Master',
+  302: 'Mineralogist',
+  303: 'Energy Scientist',
+  304: 'Scientist',
+  305: 'Engineer'
+}
+statuses = {
+  'F': 'Fleet',
+  'P': 'Planet',
+  'N': 'Unassigned',
+  'V': 'Hiring'
+}
+skills = {
+  0: 'None',
+  11: 'Preemptive Fire',
+  31: 'Piercing Fire',
+  41: 'Spread Fire',
+  43: 'Random Fire',
+  44: 'Explosive Fire',
+  52: 'Beam Coordination',
+  53: 'Missile Coordination',
+  55: 'Cannon Coordination',
+  64: 'Cannon Defence',
+  72: 'Emergency Repair',
+  73: 'Confusion Fire',
+  97: 'Enhanced Cosments'
+}
+specials = {
+  0: 'None',
+  1: 'Leadership',
+  2: 'Attack',
+  3: 'Defence',
+  4: 'Govern',
+  5: 'Ability',
+  6: 'Skill',
+  7: 'Skill'
+}
+tronTypes = {
+  11: 'Ability',
+  13: 'Exp',
+  14: 'Govern',
+  22: 'Attack',
+  23: 'Defence',
+  24: 'Leadership'
+}
+exterTypes = {
+  1: 'Leadership',
+  4: 'Govern',
+  2: 'Attack',
+  3: 'Defence',
+  4: 'Govern',
+  5: 'Ability',
+  6: 'Skill',
+  7: 'Skill',
+  24: 'Cannon Eva'
+}
+
+tronTypeToHeroAttr = {
+  14: 'gov',
+  22: 'att',
+  23: 'def',
+  24: 'leadership'
+}
+tronSpecialsToHeroAttr = {
+  1: 'leadership',
+  2: 'att',
+  3: 'def',
+  4: 'gov'
+}
+exterTypeToHeroAttr = {
+  1: 'leadership',
+  4: 'gov',
+  2: 'att',
+  3: 'def',
+}
+
+with open(sys.argv[1], 'r') as f:
+  data = json.load(f)
+
+#print(type(data['data']['hero_list']))
+#print(type(data['data']['hero_list'][0]))
+heroes = sorted(data['data']['hero_list'], key=lambda k: k['name'])
+
+fieldnames = ['name', 'status', 'job', 'skill_id','leadership','att','attPercent','def','defPercent','gov','govPercent','special','level']
+writer = csv.DictWriter(sys.stdout, fieldnames, '', 'ignore')
+
+writer.writeheader()
+for hero in heroes:
+  hero['job'] = jobs.get(int(hero['job']), hero['job'])
+  hero['status'] = statuses.get(hero['status'], hero['status'])
+  hero['skill_id'] = skills.get(int(hero['skill_id']), hero['skill_id'])
+  hero['special'] = specials.get(int(hero['special']), hero['special'])
+  hero['level'] = hero['level']['cur']
+#  print(hero['name'])
+  for tron in hero['tron']:
+    if tron['type'] in tronTypeToHeroAttr:
+      attr = tronTypeToHeroAttr.get(tron['type'])
+      if attr is not None:
+        hero[attr] = int(hero[attr]) - tron['skill']
+#    tron['typeName'] = tronTypes.get(tron['type'], tron['type'])
+#    print('  ', tron['typeName'], tron['skill'])
+    for option in tron['option']:
+      attr = tronSpecialsToHeroAttr.get(int(option['id']))
+      if attr is not None:
+        hero[attr] = int(hero[attr]) - int(option['val'])
+#      print('  ', specials.get(int(option['id']), option['id']), option['val'])
+    if 'exter' in tron:
+      attr = exterTypeToHeroAttr.get(tron['exter']['type'])
+      if attr is not None:
+        hero[attr] = int(hero[attr]) - tron['exter']['value']
+#      print('    ', exterTypes.get(tron['exter']['type'], tron['exter']['type']), tron['exter']['value'])
+  total = int(hero['att']) + int(hero['def']) + int(hero['gov'])
+  attPercent = int(hero['att']) * 100 // total
+  defPercent = int(hero['def']) * 100 // total
+  govPercent = int(hero['gov']) * 100 // total
+  hero['attPercent'] = str(attPercent) + '%'
+  hero['defPercent'] = str(defPercent) + '%'
+  hero['govPercent'] = str(govPercent) + '%'
+  writer.writerow(hero)

@@ -1,0 +1,3 @@
+#!/bin/bash
+branch="$( git branch -a | grep '*' | awk '{ print $2 }' )"
+git push --set-upstream origin "$branch"

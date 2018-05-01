@@ -196,6 +196,7 @@ func targetFileNameFormat(numberOfFiles int) string {
 	os.Exit(1)
 	return ""
 }
+
 func longestSourceFileName(operations []renameOperation) int {
 	longest := 0
 	for _, o := range operations {

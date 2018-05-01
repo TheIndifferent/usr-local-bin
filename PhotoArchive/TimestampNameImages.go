@@ -15,56 +15,9 @@ import (
 	"github.com/xor-gate/goexif2/exif"
 )
 
-type supportedFile struct {
-	fileName string
-	fileExt  string
-}
-
-type sortingEntry struct {
-	fileName string
-	fileExt  string
-	exifTime string
-}
-
-type renameOperation struct {
-	sourceName string
-	targetName string
-}
-
-func listFiles() []string {
-	dirContent, dirContentErr := ioutil.ReadDir(".")
-	if dirContentErr != nil {
-		fmt.Fprintf(os.Stderr, "error listing dir: %v\n", dirContentErr)
-		os.Exit(1)
-	}
-
-	var files []string
-	for _, f := range dirContent {
-		if !f.IsDir() {
-			files = append(files, f.Name())
-		}
-	}
-	return files
-}
-
-func isSupportedPhoto(ext string) bool {
-	return ext == ".nef" || ext == ".dng" || ext == ".jpg"
-}
-
-func isSupportedVideo(ext string) bool {
-	return ext == ".mp4"
-}
-
-func supportedFiles(files []string) []supportedFile {
-	var list []supportedFile
-	for _, f := range files {
-		ext := strings.ToLower(filepath.Ext(f))
-		if isSupportedPhoto(ext) || isSupportedVideo(ext) {
-			list = append(list, supportedFile{f, ext})
-		}
-	}
-	return list
-}
+//
+// START: MEDIA DATA EXTRACTION
+//
 
 func getExifStringValue(exifData *exif.Exif, fieldName exif.FieldName) string {
 	tag, tagError := exifData.Get(fieldName)
@@ -192,25 +145,111 @@ func earliestMediaTime(fileName string) string {
 	return ""
 }
 
-func sortedFiles(files []supportedFile) []sortingEntry {
-	var sorting []sortingEntry
-	for _, f := range files {
-		if isSupportedPhoto(f.fileExt) {
-			exifTime := earliestExifTime(f.fileName)
-			entry := sortingEntry{f.fileName, f.fileExt, exifTime}
-			sorting = append(sorting, entry)
-			continue
-		}
-		if isSupportedVideo(f.fileExt) {
-			mediaTime := earliestMediaTime(f.fileName)
-			entry := sortingEntry{f.fileName, f.fileExt, mediaTime}
-			sorting = append(sorting, entry)
+func mediaTimestamp(fileName string, fileExt string) string {
+	if isSupportedPhoto(fileExt) {
+		return earliestExifTime(fileName)
+	}
+	if isSupportedVideo(fileExt) {
+		return earliestMediaTime(fileName)
+	}
+	return ""
+}
+
+//
+// END: MEDIA DATA EXTRACTION
+//
+
+func isSupportedPhoto(ext string) bool {
+	return ext == ".nef" || ext == ".dng" || ext == ".jpg"
+}
+
+func isSupportedVideo(ext string) bool {
+	return ext == ".mp4"
+}
+
+func listFiles() (int, []os.FileInfo) {
+	dirContent, dirContentErr := ioutil.ReadDir(".")
+	if dirContentErr != nil {
+		fmt.Fprintf(os.Stderr, "error listing dir: %v\n", dirContentErr)
+		os.Exit(1)
+	}
+	return len(dirContent), dirContent
+}
+
+func targetFileNameFormat(numberOfFiles int) string {
+	if numberOfFiles < 10 {
+		return "%d-%s%s"
+	}
+	if numberOfFiles < 100 {
+		return "%02d-%s%s"
+	}
+	if numberOfFiles < 1000 {
+		return "%03d-%s%s"
+	}
+	if numberOfFiles < 10000 {
+		return "%04d-%s%s"
+	}
+	if numberOfFiles < 100000 {
+		return "%05d-%s%s"
+	}
+	fmt.Fprintf(os.Stderr, "too many files: %d\n", numberOfFiles)
+	os.Exit(1)
+	return ""
+}
+func longestSourceFileName(operations []renameOperation) int {
+	longest := 0
+	for _, o := range operations {
+		l := len(o.sourceName)
+		if l > longest {
+			longest = l
 		}
 	}
-	sort.Slice(sorting, func(i, j int) bool {
-		a := sorting[i]
-		b := sorting[j]
-		if a.exifTime == b.exifTime {
+	return longest
+}
+
+type fileMetaData struct {
+	fileName  string
+	fileExt   string
+	mediaTime string
+}
+
+type renameOperation struct {
+	sourceName string
+	targetName string
+}
+
+func main() {
+	var dryRun bool
+	flag.BoolVar(&dryRun, "n", false, "dry run")
+	flag.Parse()
+	if dryRun {
+		fmt.Println("Dry run:")
+	}
+
+	var metaData []fileMetaData
+	numberOfFiles, files := listFiles()
+	for index, file := range files {
+		fmt.Printf("\rprocessing files: %d/%d...", index+1, numberOfFiles)
+		// skipping dirs:
+		if file.IsDir() {
+			continue
+		}
+		// extracting media timestamps:
+		ext := strings.ToLower(filepath.Ext(file.Name()))
+		mediaTime := mediaTimestamp(file.Name(), ext)
+		// skipping unsupported formats:
+		if mediaTime == "" {
+			continue
+		}
+		// creating everything needed for sorting:
+		metaData = append(metaData, fileMetaData{file.Name(), ext, mediaTime})
+	}
+	fmt.Println(" done.")
+	fmt.Printf("sorting %d supported files...", len(metaData))
+	sort.Slice(metaData, func(i, j int) bool {
+		a := metaData[i]
+		b := metaData[j]
+		if a.mediaTime == b.mediaTime {
 			if a.fileName == b.fileName {
 				fmt.Fprintf(os.Stderr, "file encountered twice: %s\n", a.fileName)
 				os.Exit(1)
@@ -225,71 +264,31 @@ func sortedFiles(files []supportedFile) []sortingEntry {
 			}
 			return aLen < bLen
 		}
-		return a.exifTime < b.exifTime
+		return a.mediaTime < b.mediaTime
 	})
-	return sorting
-}
-
-func renameOperations(files []sortingEntry) []renameOperation {
-	var indexFormat string
-	sortedLength := len(files)
-	if sortedLength < 10 {
-		indexFormat = "%d"
-	} else if sortedLength < 100 {
-		indexFormat = "%02d"
-	} else if sortedLength < 1000 {
-		indexFormat = "%03d"
-	} else if sortedLength < 10000 {
-		indexFormat = "%04d"
-	} else if sortedLength < 100000 {
-		indexFormat = "%05d"
-	} else {
-		fmt.Fprintf(os.Stderr, "too many files: %d\n", sortedLength)
-		os.Exit(1)
-	}
-
+	fmt.Println(" done.")
+	fmt.Print("preparing rename operations...")
+	longestSourceName := 0
 	var operations []renameOperation
-	for index, s := range files {
-		strIndex := fmt.Sprintf(indexFormat, index+1)
-		operation := renameOperation{s.fileName, fmt.Sprintf("%s-%s%s", strIndex, s.exifTime, s.fileExt)}
-		operations = append(operations, operation)
-	}
-	return operations
-}
-
-func longestSourceFileName(operations []renameOperation) int {
-	longest := 0
-	for _, o := range operations {
-		l := len(o.sourceName)
-		if l > longest {
-			longest = l
+	targetFormat := targetFileNameFormat(len(metaData))
+	for index, md := range metaData {
+		targetName := fmt.Sprintf(targetFormat, index+1, md.mediaTime, md.fileExt)
+		operations = append(operations, renameOperation{md.fileName, targetName})
+		// choosing longest source file name for next operation:
+		sourceNameLength := len(md.fileName)
+		if sourceNameLength > longestSourceName {
+			longestSourceName = sourceNameLength
 		}
 	}
-	return longest
-}
-
-func main() {
-
-	var dryRun bool
-	flag.BoolVar(&dryRun, "n", false, "dry run")
-	flag.Parse()
-	if dryRun {
-		fmt.Println("Dry run:")
-	}
-
-	files := listFiles()
-	supported := supportedFiles(files)
-	sorted := sortedFiles(supported)
-	renames := renameOperations(sorted)
-
-	longestSource := longestSourceFileName(renames)
-	format := fmt.Sprintf("%%%ds    =>    %%s\n", longestSource)
-
-	for _, f := range renames {
+	fmt.Println(" done.")
+	fmt.Println("renaming:")
+	format := fmt.Sprintf("    %%%ds    =>    %%s\n", longestSourceName)
+	for _, f := range operations {
 		fmt.Printf(format, f.sourceName, f.targetName)
 		if !dryRun {
 			os.Rename(f.sourceName, f.targetName)
 			os.Chmod(f.targetName, 0444)
 		}
 	}
+	fmt.Println("finished.")
 }

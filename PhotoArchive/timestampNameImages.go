@@ -15,6 +15,17 @@ import (
 	"github.com/xor-gate/goexif2/exif"
 )
 
+type fileMetaData struct {
+	fileName  string
+	fileExt   string
+	mediaTime string
+}
+
+type renameOperation struct {
+	sourceName string
+	targetName string
+}
+
 //
 // START: MEDIA DATA EXTRACTION
 //
@@ -197,31 +208,33 @@ func targetFileNameFormat(numberOfFiles int) string {
 	return ""
 }
 
-func longestSourceFileName(operations []renameOperation) int {
-	longest := 0
-	for _, o := range operations {
-		l := len(o.sourceName)
-		if l > longest {
-			longest = l
+func verifyOperations(operations []renameOperation, longestSourceName int) {
+	format := fmt.Sprintf("    %%%ds    =>    %%s\n", longestSourceName)
+	duplicatesMap := make(map[string]string)
+	for _, operation := range operations {
+		fmt.Printf(format, operation.sourceName, operation.targetName)
+		// check for target name duplicates:
+		if _, existsInMap := duplicatesMap[operation.targetName]; existsInMap {
+			fmt.Fprintf(os.Stderr, "\ntarget file name duplicate: %s\n", operation.targetName)
+			os.Exit(1)
+		} else {
+			duplicatesMap[operation.targetName] = operation.targetName
+		}
+		// check for renaming duplicates:
+		if operation.sourceName != operation.targetName {
+			if _, existsInDir := os.Stat(operation.targetName); existsInDir == nil {
+				fmt.Fprintf(os.Stderr, "\ntarget file exists on file system: %s\n", operation.targetName)
+				os.Exit(1)
+			}
 		}
 	}
-	return longest
-}
-
-type fileMetaData struct {
-	fileName  string
-	fileExt   string
-	mediaTime string
-}
-
-type renameOperation struct {
-	sourceName string
-	targetName string
 }
 
 func main() {
 	var dryRun bool
-	flag.BoolVar(&dryRun, "n", false, "dry run")
+	var noPrefix bool
+	flag.BoolVar(&dryRun, "d", false, "dry run")
+	flag.BoolVar(&noPrefix, "p", false, "no counter prefix")
 	flag.Parse()
 	if dryRun {
 		fmt.Println("Dry run:")
@@ -271,9 +284,20 @@ func main() {
 	fmt.Print("preparing rename operations...")
 	longestSourceName := 0
 	var operations []renameOperation
-	targetFormat := targetFileNameFormat(len(metaData))
+	var targetFormat string
+	if noPrefix {
+		targetFormat = "%s%s"
+	} else {
+		targetFormat = targetFileNameFormat(len(metaData))
+	}
 	for index, md := range metaData {
-		targetName := fmt.Sprintf(targetFormat, index+1, md.mediaTime, md.fileExt)
+		var targetName string
+		// different target name depending on prefix flag:
+		if noPrefix {
+			targetName = fmt.Sprintf(targetFormat, md.mediaTime, md.fileExt)
+		} else {
+			targetName = fmt.Sprintf(targetFormat, index+1, md.mediaTime, md.fileExt)
+		}
 		operations = append(operations, renameOperation{md.fileName, targetName})
 		// choosing longest source file name for next operation:
 		sourceNameLength := len(md.fileName)
@@ -282,14 +306,16 @@ func main() {
 		}
 	}
 	fmt.Println(" done.")
-	fmt.Println("renaming:")
-	format := fmt.Sprintf("    %%%ds    =>    %%s\n", longestSourceName)
-	for _, f := range operations {
-		fmt.Printf(format, f.sourceName, f.targetName)
+	fmt.Println("verifying:")
+	verifyOperations(operations, longestSourceName)
+	fmt.Println("done.\n")
+	totalOperations := len(operations)
+	for index, f := range operations {
+		fmt.Printf("\rrenaming files: %d/%d...", index+1, totalOperations)
 		if !dryRun {
 			os.Rename(f.sourceName, f.targetName)
 			os.Chmod(f.targetName, 0444)
 		}
 	}
-	fmt.Println("finished.")
+	fmt.Println("\n\nfinished.")
 }

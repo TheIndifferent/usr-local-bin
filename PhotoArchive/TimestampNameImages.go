@@ -47,19 +47,19 @@ func getExifStringValue(exifData *exif.Exif, fieldName exif.FieldName) string {
 func earliestExifTime(file string) string {
 	openFile, openError := os.Open(file)
 	if openError != nil {
-		fmt.Fprintf(os.Stderr, "error opening file: %v\n", openError)
+		fmt.Fprintf(os.Stderr, "error opening file %s: %v\n", file, openError)
 		os.Exit(1)
 	}
 	defer func() {
 		closeError := openFile.Close()
 		if closeError != nil {
-			fmt.Fprintf(os.Stderr, "error closing file: %v\n", closeError)
+			fmt.Fprintf(os.Stderr, "error closing file %s: %v\n", file, closeError)
 			os.Exit(1)
 		}
 	}()
 	exifData, exifError := exif.Decode(openFile)
 	if exifError != nil {
-		fmt.Fprintf(os.Stderr, "error reading exif: %v\n", exifError)
+		fmt.Fprintf(os.Stderr, "error reading exif in file %s: %v\n", file, exifError)
 		os.Exit(1)
 	}
 	exifDates := []string{
@@ -70,8 +70,12 @@ func earliestExifTime(file string) string {
 	earliest := exifDates[0]
 	parsed, parseError := time.Parse("2006:01:02 15:04:05", earliest)
 	if parseError != nil {
-		fmt.Fprintf(os.Stderr, "error parsing exif date: %v\n", parseError)
-		os.Exit(1)
+		// bug in Samsung S9 camera, panorama photo has different date format:
+		parsed, parseError = time.Parse("2006-01-02 15:04:05", earliest)
+		if parseError != nil {
+			fmt.Fprintf(os.Stderr, "error parsing exif date in file %s: %v\n", file, parseError)
+			os.Exit(1)
+		}
 	}
 	return parsed.Format("20060102-150405")
 }

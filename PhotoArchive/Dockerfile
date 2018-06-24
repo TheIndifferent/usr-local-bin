@@ -11,4 +11,4 @@ RUN apt-get -y update \
 WORKDIR /PhotoArchive
 
 RUN go get github.com/xor-gate/goexif2/exif
-ENTRYPOINT go build timestampNameImages.go
+ENTRYPOINT go build TimestampNameImages.go

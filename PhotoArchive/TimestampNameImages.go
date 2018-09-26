@@ -137,7 +137,7 @@ func earliestMediaTime(fileName string) string {
 					offset := uint64(time.Date(1904, 1, 1, 0, 0, 0, 0, time.UTC).Unix())
 					// adding negative offset:
 					seconds += offset
-					return time.Unix(int64(seconds), 0).Format("20060102-150405")
+					return time.Unix(int64(seconds), 0).UTC().Format("20060102-150405")
 				} else {
 					processedMoov += l
 					processed += l

@@ -11,9 +11,10 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/xor-gate/goexif2/exif"
 )
+
+var tiffEndianessLittle = binary.BigEndian.Uint16([]byte("II"))
+var tiffEndianessBig = binary.BigEndian.Uint16([]byte("MM"))
 
 type fileMetaData struct {
 	fileName  string
@@ -30,57 +31,252 @@ type renameOperation struct {
 // START: MEDIA DATA EXTRACTION
 //
 
-func getExifStringValue(exifData *exif.Exif, fieldName exif.FieldName) string {
-	tag, tagError := exifData.Get(fieldName)
-	if tagError != nil {
-		fmt.Fprintf(os.Stderr, "error reading exif tag: %v\n", tagError)
+func photoAppendDateValueOffsetsFromIFD(fileName string, file *os.File, bo binary.ByteOrder, dateTagOffsets []uint32) ([]uint32, uint32) {
+	// 2-byte count of the number of directory entries (i.e., the number of fields)
+	var fields uint16
+	err := binary.Read(file, bo, &fields)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading number of IFD entries %s: %v\n", fileName, err)
 		os.Exit(1)
 	}
-	str, strErr := tag.StringVal()
-	if strErr != nil {
-		fmt.Fprintf(os.Stderr, "error converting tag to string: %v\n", strErr)
-		os.Exit(1)
+
+	// EXIF IFD will be needed after parsing all current IFDs:
+	var exifOffset uint32
+
+	for t := 0; t < int(fields); t++ {
+		// Bytes 0-1 The Tag that identifies the field
+		var fieldTag uint16
+		err := binary.Read(file, bo, &fieldTag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading IFD tag %s: %v\n", fileName, err)
+			os.Exit(1)
+		}
+
+		// Bytes 2-3 The field Type
+		var fieldType uint16
+		err = binary.Read(file, bo, &fieldType)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading IFD type %s: %v\n", fileName, err)
+			os.Exit(1)
+		}
+
+		// Bytes 4-7 The number of values, Count of the indicated Type
+		var fieldCount uint32
+		err = binary.Read(file, bo, &fieldCount)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading IFD count %s: %v\n", fileName, err)
+			os.Exit(1)
+		}
+
+		// Bytes 8-11 The Value Offset, the file offset (in bytes) of the Value for the field
+		var fieldValueOffset uint32
+		err = binary.Read(file, bo, &fieldValueOffset)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading IFD value offset %s: %v\n", fileName, err)
+			os.Exit(1)
+		}
+
+		// 0x0132: DateTime
+		// 0x9003: DateTimeOriginal
+		// 0x9004: DateTimeDigitized
+		if fieldTag == 0x0132 || fieldTag == 0x9003 || fieldTag == 0x9004 {
+			if fieldType != 2 {
+				fmt.Fprintf(os.Stderr, "expected tag has unexpected type in file %s: %d == %d\n", fileName, fieldTag, fieldType)
+				os.Exit(1)
+			}
+			if fieldCount != 20 {
+				fmt.Fprintf(os.Stderr, "expected tag has unexpected size in file %s: %d == %d\n", fileName, fieldTag, fieldCount)
+				os.Exit(1)
+			}
+			dateTagOffsets = append(dateTagOffsets, fieldValueOffset)
+		}
+
+		// 0x8769: ExifIFDPointer
+		if fieldTag == 0x8769 {
+			if fieldType != 4 {
+				fmt.Fprintf(os.Stderr, "EXIF pointer tag has unexpected type in file %s: %d == %d\n", fileName, fieldTag, fieldType)
+				os.Exit(1)
+			}
+			if fieldCount != 1 {
+				fmt.Fprintf(os.Stderr, "EXIF pointer tag has unexpected size in file %s: %d == %d\n", fileName, fieldTag, fieldCount)
+				os.Exit(1)
+			}
+			exifOffset = fieldValueOffset
+		}
 	}
-	return str
+
+	return dateTagOffsets, exifOffset
 }
 
-func earliestExifTime(file string) string {
-	openFile, openError := os.Open(file)
+// https://www.adobe.io/content/dam/udp/en/open/standards/tiff/TIFF6.pdf
+func photoParseTiffEarliestDate(file *os.File, fileName string) string {
+	// Bytes 0-1: The byte order used within the file. Legal values are:
+	// “II” (4949.H)
+	// “MM” (4D4D.H)
+	var tiffEndianess uint16
+	// smart thing about specification, we can supplly any endianess:
+	err := binary.Read(file, binary.LittleEndian, &tiffEndianess)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading file header %s: %v\n", fileName, err)
+		os.Exit(1)
+	}
+
+	// In the “II” format, byte order is always from the least significant byte to the most
+	// significant byte, for both 16-bit and 32-bit integers.
+	// This is called little-endian byte order.
+	//  In the “MM” format, byte order is always from most significant to least
+	// significant, for both 16-bit and 32-bit integers.
+	// This is called big-endian byte order
+	var bo binary.ByteOrder
+	switch tiffEndianess {
+	case tiffEndianessBig:
+		bo = binary.BigEndian
+	case tiffEndianessLittle:
+		bo = binary.LittleEndian
+	default:
+		fmt.Fprintf(os.Stderr, "invalid TIFF file header for file %s: %v\n", fileName, tiffEndianess)
+		os.Exit(1)
+	}
+
+	// Bytes 2-3 An arbitrary but carefully chosen number (42)
+	// that further identifies the file as a TIFF file.
+	var tiffMagic uint16
+	err = binary.Read(file, bo, &tiffMagic)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading TIFF magic number %s: %v\n", fileName, err)
+		os.Exit(1)
+	}
+	if tiffMagic != 42 {
+		fmt.Fprintf(os.Stderr, "invalid TIFF magic number %s: %v\n", fileName, tiffMagic)
+		os.Exit(1)
+	}
+
+	// Bytes 4-7 The offset (in bytes) of the first IFD.
+	var ifdOffset uint32
+	err = binary.Read(file, bo, &ifdOffset)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading IFD offset %s: %v\n", fileName, err)
+		os.Exit(1)
+	}
+
+	// offsets for date tags we are looking for:
+	var dateTagOffsets []uint32
+	// offset for EXIF IFD:
+	var exifOffset uint32
+
+	// saving previous offset to protect against recursive IFD:
+	var ifdOffsetPrev = ifdOffset
+	for ifdOffset != 0 {
+		// seek the IFD:
+		_, err := file.Seek(int64(ifdOffset), 0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error seeking IFD offset %s: %v\n", fileName, err)
+			os.Exit(1)
+		}
+
+		dateTagOffsets, exifOffset = photoAppendDateValueOffsetsFromIFD(fileName, file, bo, dateTagOffsets)
+
+		// we are looking for only 3 tags:
+		if len(dateTagOffsets) == 3 {
+			break
+		}
+
+		err = binary.Read(file, bo, &ifdOffset)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading next IFD offset: %s\n", fileName)
+			os.Exit(1)
+		}
+
+		if ifdOffset == ifdOffsetPrev {
+			fmt.Fprintf(os.Stderr, "recursive IFD is not supported: %s\n", fileName)
+			os.Exit(1)
+		}
+		// if EXIF offset matches current offset then skip EXIF:
+		if ifdOffset == exifOffset {
+			exifOffset = 0
+		}
+		ifdOffsetPrev = ifdOffset
+	}
+	// read EXIF IFD:
+	for exifOffset != 0 {
+		_, err = file.Seek(int64(exifOffset), 0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error seeking EXIF offset %s: %v\n", fileName, err)
+			os.Exit(1)
+		}
+		var exifOffsetPrev = exifOffset
+		dateTagOffsets, exifOffset = photoAppendDateValueOffsetsFromIFD(fileName, file, bo, dateTagOffsets)
+		// protection from recursive offsets:
+		if exifOffset == exifOffsetPrev {
+			break
+		}
+	}
+
+	if len(dateTagOffsets) == 0 {
+		fmt.Fprintf(os.Stderr, "no date tags found in file: %s\n", fileName)
+		os.Exit(1)
+	}
+	// sort to read from closest tag:
+	sort.Slice(dateTagOffsets, func(i, j int) bool {
+		return dateTagOffsets[i] < dateTagOffsets[j]
+	})
+
+	// 2 = ASCII 8-bit byte that contains a 7-bit ASCII code; the last byte must be NUL (binary zero).
+	// tag count is 20, which means 19 chars and binary NUL,
+	// we will read only 19 bytes then:
+	var earliestDate string
+	var buffer = make([]byte, 19)
+	for _, tagOffset := range dateTagOffsets {
+		_, err = file.Seek(int64(tagOffset), 0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error seeking date tag value %s: %v\n", fileName, err)
+			os.Exit(1)
+		}
+		_, err = file.Read(buffer)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading date tag value %s: %v\n", fileName, err)
+			os.Exit(1)
+		}
+		if len(earliestDate) == 0 {
+			earliestDate = string(buffer)
+		} else {
+			str := string(buffer)
+			if str < earliestDate {
+				earliestDate = str
+			}
+		}
+	}
+
+	parsed, parseError := time.Parse("2006:01:02 15:04:05", earliestDate)
+	if parseError != nil {
+		// bug in Samsung S9 camera, panorama photo has different date format:
+		parsed2, parseError2 := time.Parse("2006-01-02 15:04:05", earliestDate)
+		if parseError != nil {
+			fmt.Fprintf(os.Stderr, "error parsing exif date in file %s:\n\t%v\n\t%v\n", fileName, parseError, parseError2)
+			os.Exit(1)
+		}
+		parsed = parsed2
+	}
+	return parsed.Format("20060102-150405")
+}
+
+func photoEarliestTime(fileName string) string {
+	openFile, openError := os.Open(fileName)
 	if openError != nil {
-		fmt.Fprintf(os.Stderr, "error opening file %s: %v\n", file, openError)
+		fmt.Fprintf(os.Stderr, "error opening file %s: %v\n", fileName, openError)
 		os.Exit(1)
 	}
 	defer func() {
 		closeError := openFile.Close()
 		if closeError != nil {
-			fmt.Fprintf(os.Stderr, "error closing file %s: %v\n", file, closeError)
+			fmt.Fprintf(os.Stderr, "error closing file %s: %v\n", fileName, closeError)
 			os.Exit(1)
 		}
 	}()
-	exifData, exifError := exif.Decode(openFile)
-	if exifError != nil {
-		fmt.Fprintf(os.Stderr, "error reading exif in file %s: %v\n", file, exifError)
-		os.Exit(1)
-	}
-	exifDates := []string{
-		getExifStringValue(exifData, exif.DateTime),
-		getExifStringValue(exifData, exif.DateTimeDigitized),
-		getExifStringValue(exifData, exif.DateTimeOriginal)}
-	sort.Strings(exifDates)
-	earliest := exifDates[0]
-	parsed, parseError := time.Parse("2006:01:02 15:04:05", earliest)
-	if parseError != nil {
-		// bug in Samsung S9 camera, panorama photo has different date format:
-		parsed, parseError = time.Parse("2006-01-02 15:04:05", earliest)
-		if parseError != nil {
-			fmt.Fprintf(os.Stderr, "error parsing exif date in file %s: %v\n", file, parseError)
-			os.Exit(1)
-		}
-	}
-	return parsed.Format("20060102-150405")
+	return photoParseTiffEarliestDate(openFile, fileName)
 }
 
-func readAtLeast(file *os.File, buffer []byte) {
+func videoReadAtLeast(file *os.File, buffer []byte) {
 	_, readErr := io.ReadAtLeast(file, buffer, 8)
 	if readErr != nil {
 		fmt.Fprintf(os.Stderr, "error reading media file: %v\n", readErr)
@@ -88,14 +284,14 @@ func readAtLeast(file *os.File, buffer []byte) {
 	}
 }
 
-func nextAtom(file *os.File, buffer []byte) (uint32, string) {
-	readAtLeast(file, buffer)
+func videoNextAtom(file *os.File, buffer []byte) (uint32, string) {
+	videoReadAtLeast(file, buffer)
 	len := binary.BigEndian.Uint32(buffer[:4])
 	typeStr := string(buffer[4:])
 	return len, typeStr
 }
 
-func earliestMediaTime(fileName string) string {
+func videoEarliestTime(fileName string) string {
 	file, openError := os.Open(fileName)
 	if openError != nil {
 		fmt.Fprintf(os.Stderr, "error opening media file: %v\n", openError)
@@ -118,16 +314,16 @@ func earliestMediaTime(fileName string) string {
 	}
 	total := uint32(fileStat.Size())
 	for {
-		len, typeStr := nextAtom(file, buffer)
+		len, typeStr := videoNextAtom(file, buffer)
 		if typeStr == "moov" {
 			var processedMoov uint32 = 8
 			for {
-				l, t := nextAtom(file, buffer)
+				l, t := videoNextAtom(file, buffer)
 				if t == "mvhd" {
-					readAtLeast(file, buffer)
+					videoReadAtLeast(file, buffer)
 					version := buffer[0]
 					var seconds uint64
-					readAtLeast(file, buffer)
+					videoReadAtLeast(file, buffer)
 					if version == 1 {
 						seconds = binary.BigEndian.Uint64(buffer)
 					} else {
@@ -162,10 +358,10 @@ func earliestMediaTime(fileName string) string {
 
 func mediaTimestamp(fileName string, fileExt string) string {
 	if isSupportedPhoto(fileExt) {
-		return earliestExifTime(fileName)
+		return photoEarliestTime(fileName)
 	}
 	if isSupportedVideo(fileExt) {
-		return earliestMediaTime(fileName)
+		return videoEarliestTime(fileName)
 	}
 	return ""
 }
@@ -317,8 +513,16 @@ func main() {
 	for index, f := range operations {
 		fmt.Printf("\rrenaming files: %d/%d...", index+1, totalOperations)
 		if !dryRun {
-			os.Rename(f.sourceName, f.targetName)
-			os.Chmod(f.targetName, 0444)
+			renameError := os.Rename(f.sourceName, f.targetName)
+			if renameError != nil {
+				fmt.Fprintf(os.Stderr, "\nerror renaming file %s: %v\n", f.sourceName, renameError)
+				os.Exit(1)
+			}
+			chmodError := os.Chmod(f.targetName, 0444)
+			if chmodError != nil {
+				fmt.Fprintf(os.Stderr, "\nerror chmoding file %s: %v\n", f.sourceName, chmodError)
+				os.Exit(1)
+			}
 		}
 	}
 	fmt.Println("\n\nfinished.")

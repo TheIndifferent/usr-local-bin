@@ -1,0 +1,12 @@
+[package]
+name = "abbreviate_cwd"
+version = "0.1.0"
+authors = ["Stanislav Baiduzhyi <baiduzhyi.devel@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+dirs = "2.0.1"
+
+[[bin]]
+name = "abbreviate-cwd"
+path = "abbreviate-cwd.rs"

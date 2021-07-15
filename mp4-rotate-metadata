@@ -1,0 +1,6 @@
+#!/bin/bash
+shopt -s extglob
+for f in ?(*.MP4|*.mp4)
+do
+  ffmpeg -i "$f" -c copy -metadata:s:v:0 rotate=90 "$( echo "$f" | sed -e 's/.MP4$//' -e 's/.mp4$//' )_v.mp4"
+done
